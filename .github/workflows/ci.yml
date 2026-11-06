@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: mypy
+      - run: pytest -m "not integration"
+      - name: The built wheel works in a clean environment
+        run: |
+          python -m build --wheel
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/clean/bin/voice-probe --version
+          /tmp/clean/bin/voice-probe analyze "$GITHUB_WORKSPACE/tests/fixtures/run.jsonl"
+
+  calibration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - name: LiveKit server in dev mode
+        run: |
+          docker run -d --name livekit --network host \
+            livekit/livekit-server:v1.13.11 --dev --node-ip 127.0.0.1
+          timeout 30 bash -c 'until curl -sf http://127.0.0.1:7880 >/dev/null; do sleep 1; done'
+      - name: The probe recovers delays it is told about
+        run: pytest -m integration -v -rs
+      - name: A full run through the command line
+        run: scripts/calibrate.sh runs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: calibration-run
+          path: runs/
+      - name: Server log on failure
+        if: failure()
+        run: docker logs livekit 2>&1 | tail -50
