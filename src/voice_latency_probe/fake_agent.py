@@ -160,6 +160,8 @@ def fake_agent_token(options: FakeAgentOptions) -> str:
                 can_publish=True,
                 can_subscribe=True,
                 can_publish_data=True,
+                # Without this the server refuses attribute changes, so no state.
+                can_update_own_metadata=True,
             )
         )
         .to_jwt()

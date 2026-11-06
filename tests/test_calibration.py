@@ -75,6 +75,8 @@ async def test_the_probe_recovers_known_delays(tmp_path: Path) -> None:
     assert summary.end_of_turn is not None
     assert summary.reply is not None
     assert summary.total is not None
+    assert summary.agent is not None
+    assert summary.agent.count == summary.total.count
     assert summary.end_of_turn.p50 == pytest.approx(500, abs=TOLERANCE_MS)
     assert summary.reply.p50 == pytest.approx(700, abs=TOLERANCE_MS)
     assert summary.total.p50 == pytest.approx(1200, abs=TOLERANCE_MS)
