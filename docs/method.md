@@ -12,16 +12,20 @@ An agent that does not greet is fine. The call goes on after `--greeting-timeout
 
 | Source | Size | Direction |
 |---|---|---|
-| Send queue: `t_speech_end` is taken when the frame enters a 50 ms queue | up to 50 ms | Total reads high |
+| Send queue: `t_speech_end` is taken when the frame enters a 50 ms queue | about 50 ms, measured in calibration | End of turn and total read high |
 | Frame size: voice is detected on received frames | about 10 ms | Total reads high |
 | Output buffer of a real device: not included | device dependent | Total reads low |
 | Voice threshold: RMS 300 on int16 | a quiet start can be missed by a frame or two | Total reads high |
 
 `t_final` can arrive slightly before `t_speech_end` when the agent closes the turn early. It is kept as a negative end of turn, because that is a finding and not a bug. Anything more than 300 ms before the end belongs to an earlier turn and is ignored.
 
+## State and audio travel on different paths
+
+`lk.agent.state` goes through signaling and the voice through media. In calibration the state always arrived first, and the agent stage came back within 2 ms of the known delay. Nothing guarantees that order on another network. If the state arrives after the voice, delivery goes negative and the agent stage reads high. The reply stage uses only the transcript and the audio, so it does not have this problem.
+
 ## Turns that cannot be split
 
-A stage stays empty when the agent does not publish what it needs. No final transcript means no end-of-turn and agent numbers. No `lk.agent.state` means no agent and delivery numbers. The voice-to-voice total does not depend on either.
+A stage stays empty when the agent does not publish what it needs. No final transcript means no end-of-turn, reply and agent numbers. No `lk.agent.state` means no agent and delivery numbers, while reply remains. The voice-to-voice total does not depend on either.
 
 ## What the record holds
 

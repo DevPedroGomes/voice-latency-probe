@@ -7,22 +7,27 @@ A synthetic caller for LiveKit voice agents. It joins a room like a person would
 I built it because the number my agent reported was not the number a caller felt.
 
 ```text
+1 calls, 8 turns sent, 0 unanswered, 0 with the agent talking over the caller
+
 milliseconds                                    p50     p90     p95     min     max
-caller: voice to voice                  n=4    1262    1305    1312    1230    1320
-  not reported                          n=1    1320    1320    1320    1320    1320
-  reported by the agent                 n=3    1255    1267    1268    1230    1270
+caller: voice to voice                  n=8    2400    2410    2420    2400    2431
+  not reported                          n=6    2400    2416    2424    2400    2431
+  reported by the agent                 n=2    2400    2400    2400    2400    2400
 
-stage: end of turn                      n=4     515     534     537     505     540
-stage: agent (LLM, tools, TTS)          n=4     705     724     727     690     730
-stage: delivery (network, jitter)       n=4      42      48      49      35      50
+stage: end of turn                      n=8     848     849     850     846     850
+stage: reply (agent + delivery)         n=8    1553    1562    1572    1551    1581
+  by state: agent (LLM, tools, TTS)     n=8    1500    1500    1500    1497    1500
+  by state: delivery                    n=8      54      63      74      52      84
 
-agent reported a total on 3 of 4 turns
-agent's own number                      n=3     700     708     709     690     710
-caller, same turns                      n=3    1255    1267    1268    1230    1270
-caller minus agent                      n=3     555     559     560     540     560
+agent reported a total on 2 of 8 turns
+agent's own number                      n=2    1500    1500    1500    1500    1500
+caller, same turns                      n=2    2400    2400    2400    2400    2400
+caller minus agent                      n=2     900     900     900     900     900
+
+small sample (8 turns): p90 and p95 are close to the largest value measured.
 ```
 
-That output comes from the fixture in `tests/fixtures/run.jsonl`, so you can reproduce it with no keys and no server.
+That is a real run against the fake agent described below, which holds 800 ms before closing the turn and 1500 ms before answering, and reports a total on one turn in three. It is in `examples/sample-run.jsonl`, so `voice-probe analyze examples/sample-run.jsonl` reproduces it with no keys and no server.
 
 ## Why measure from the caller
 
@@ -43,8 +48,9 @@ A caller has neither blind spot. It knows when it stopped talking and when it fi
 |---|---|---|
 | Voice to voice | `t_agent_voice - t_speech_end` | What the caller feels |
 | End of turn | `t_final - t_speech_end` | VAD or STT deciding the person stopped, plus the path to the worker and back |
+| Reply | `t_agent_voice - t_final` | Agent plus delivery. Needs no state attribute |
 | Agent | `t_speaking - t_final` | LLM, tools and TTS |
-| Delivery | `t_agent_voice - t_speaking` | Network and jitter buffer |
+| Delivery | `t_agent_voice - t_speaking` | Send buffer, network and jitter buffer |
 
 Details and known errors are in [docs/method.md](docs/method.md).
 
@@ -52,7 +58,15 @@ Details and known errors are in [docs/method.md](docs/method.md).
 
 The repo includes an agent with known delays. It has no STT, LLM or TTS and needs no paid key: it waits for the caller's audio to go quiet, holds for exactly the configured times and answers with a tone. CI measures it against a real LiveKit server on every push, and the build fails if the probe does not recover the delays.
 
-CALIBRATION_TABLE
+Latest results on the GitHub runner, loopback to a local server, 8 turns each:
+
+| Delay set in the agent | End of turn, measured p50 | Agent, measured p50 | Delivery p50 | Voice to voice p50 |
+|---|---|---|---|---|
+| 300 ms and 200 ms | 360 ms | 200 ms | 60 ms | 620 ms |
+| 500 ms and 700 ms | 556 ms | 700 ms | 53 ms | 1309 ms |
+| 800 ms and 1500 ms | 848 ms | 1500 ms | 54 ms | 2400 ms |
+
+The agent stage comes back within 2 ms. The total reads about 100 to 120 ms above the sum of the delays, and that offset stays steady: 50 ms is the caller's send queue, and the rest is the agent's own 50 ms queue plus the media path. A real caller's device has buffers of its own, so read this as the floor of the instrument. It matters less when you compare two runs, because it is in both.
 
 It also misreports itself on purpose, the way a real stack can: its total leaves out the end of turn, and it can stay silent on some turns. The second calibration test checks that the probe catches both.
 
@@ -70,7 +84,7 @@ scripts/calibrate.sh runs
 Without a server at all:
 
 ```bash
-voice-probe analyze tests/fixtures/run.jsonl
+voice-probe analyze examples/sample-run.jsonl
 ```
 
 ## Measure your own agent
