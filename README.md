@@ -58,7 +58,7 @@ Details and known errors are in [docs/method.md](docs/method.md).
 
 The repo includes an agent with known delays. It has no STT, LLM or TTS and needs no paid key: it waits for the caller's audio to go quiet, holds for exactly the configured times and answers with a tone. CI measures it against a real LiveKit server on every push, and the build fails if the probe does not recover the delays.
 
-Latest results on the GitHub runner, loopback to a local server, 8 turns each:
+Results from one CI run on the GitHub runner, loopback to a local server, 8 turns each:
 
 | Delay set in the agent | End of turn, measured p50 | Agent, measured p50 | Delivery p50 | Voice to voice p50 |
 |---|---|---|---|---|
@@ -66,7 +66,7 @@ Latest results on the GitHub runner, loopback to a local server, 8 turns each:
 | 500 ms and 700 ms | 556 ms | 700 ms | 53 ms | 1309 ms |
 | 800 ms and 1500 ms | 848 ms | 1500 ms | 54 ms | 2400 ms |
 
-The agent stage comes back within 2 ms. The total reads about 100 to 120 ms above the sum of the delays, and that offset stays steady: 50 ms is the caller's send queue, and the rest is the agent's own 50 ms queue plus the media path. A real caller's device has buffers of its own, so read this as the floor of the instrument. It matters less when you compare two runs, because it is in both.
+The agent stage came back within 2 ms in that run. The total read about 100 to 125 ms above the sum of the delays across runs, always above and never below: 50 ms is the caller's send queue, and the rest is the agent's own 50 ms queue plus the media path. The tests check that direction and a ceiling, since a symmetric tolerance would accept an error the instrument cannot make. A real caller's device has buffers of its own, so read this as the floor of the instrument. It matters less when you compare two runs, because it is in both.
 
 It also misreports itself on purpose, the way a real stack can: its total leaves out the end of turn, and it can stay silent on some turns. The second calibration test checks that the probe catches both.
 

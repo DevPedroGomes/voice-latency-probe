@@ -19,7 +19,11 @@ from voice_latency_probe.record import Call, append_call
 
 pytestmark = pytest.mark.integration
 
-TOLERANCE_MS = 120
+# Buffers only ever add time, so the error has one direction. The agent stage has no
+# buffer in it: both of its instants come from the same state and transcript path.
+STAGE_BIAS_MS = 150
+TOTAL_BIAS_MS = 250
+AGENT_ERROR_MS = 40
 ARTIFACTS = os.environ.get("PROBE_ARTIFACTS")
 
 
@@ -77,9 +81,10 @@ async def test_the_probe_recovers_known_delays(tmp_path: Path) -> None:
     assert summary.total is not None
     assert summary.agent is not None
     assert summary.agent.count == summary.total.count
-    assert summary.end_of_turn.p50 == pytest.approx(500, abs=TOLERANCE_MS)
-    assert summary.reply.p50 == pytest.approx(700, abs=TOLERANCE_MS)
-    assert summary.total.p50 == pytest.approx(1200, abs=TOLERANCE_MS)
+    assert 500 <= summary.end_of_turn.p50 <= 500 + STAGE_BIAS_MS
+    assert 700 <= summary.reply.p50 <= 700 + STAGE_BIAS_MS
+    assert 1200 <= summary.total.p50 <= 1200 + TOTAL_BIAS_MS
+    assert summary.agent.p50 == pytest.approx(700, abs=AGENT_ERROR_MS)
 
 
 async def test_the_probe_sees_what_the_agents_number_leaves_out(tmp_path: Path) -> None:
@@ -87,4 +92,4 @@ async def test_the_probe_sees_what_the_agents_number_leaves_out(tmp_path: Path) 
     summary = summarize([record])
     assert summary.reported_turns == 3
     assert summary.reported_gap is not None
-    assert summary.reported_gap.p50 == pytest.approx(500, abs=2 * TOLERANCE_MS)
+    assert 500 <= summary.reported_gap.p50 <= 500 + TOTAL_BIAS_MS
