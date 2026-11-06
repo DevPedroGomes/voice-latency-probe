@@ -14,6 +14,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from livekit import api, rtc
@@ -58,14 +59,23 @@ class _FakeAgent:
         self.room = rtc.Room()
         self.source = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=50)
         self.outgoing: asyncio.Queue[list[np.ndarray]] = asyncio.Queue()
+        self.states: asyncio.Queue[str] = asyncio.Queue()
         self.last_voice: float | None = None
         self.caller_identity: str | None = None
         self.turns = 0
         self.tasks: set[asyncio.Task[None]] = set()
         self.done = asyncio.Event()
 
-    async def set_state(self, state: str) -> None:
-        await self.room.local_participant.set_attributes({STATE_ATTRIBUTE: state})
+    def spawn(self, coroutine: Any) -> None:
+        task: asyncio.Task[None] = asyncio.ensure_future(coroutine)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    async def state_sender(self) -> None:
+        """Sends states in order. A slow update must not delay the audio."""
+        while True:
+            state = await self.states.get()
+            await self.room.local_participant.set_attributes({STATE_ATTRIBUTE: state})
 
     async def voice_out(self) -> None:
         """Sends silence until there is something to say, so the track stays warm."""
@@ -93,10 +103,10 @@ class _FakeAgent:
                 self.last_voice = time.monotonic()
 
     async def say(self, seconds: float) -> None:
-        await self.set_state("speaking")
-        await self.outgoing.put(frames(tone(seconds)))
+        self.states.put_nowait("speaking")
+        self.outgoing.put_nowait(frames(tone(seconds)))
         await asyncio.sleep(seconds + 0.1)
-        await self.set_state("listening")
+        self.states.put_nowait("listening")
 
     async def publish_final_transcript(self) -> None:
         writer = await self.room.local_participant.stream_text(
@@ -119,19 +129,22 @@ class _FakeAgent:
         if self.options.greeting_s > 0:
             await self.say(self.options.greeting_s)
         wait_s = self.options.end_of_turn_ms / 1000
+        hold_s = self.options.agent_ms / 1000
         while not self.done.is_set():
             await asyncio.sleep(0.002)
             heard = self.last_voice
             if heard is None or time.monotonic() - heard < wait_s:
                 continue
+            # Forget this turn now. Clearing it after the reply could erase the next
+            # one, if the caller has already started and finished speaking by then.
             self.last_voice = None
-            await self.publish_final_transcript()
-            await self.set_state("thinking")
-            await asyncio.sleep(self.options.agent_ms / 1000)
-            await self.report()
+            self.spawn(self.publish_final_transcript())
+            self.states.put_nowait("thinking")
+            # Deadlines from the moment of the last voice, so the time spent sending
+            # these messages does not add to the delays this agent promises.
+            await asyncio.sleep(max(0.0, heard + wait_s + hold_s - time.monotonic()))
+            self.spawn(self.report())
             await self.say(self.options.reply_s)
-            # Nothing the agent heard while talking counts as the next turn.
-            self.last_voice = None
 
 
 def fake_agent_token(options: FakeAgentOptions) -> str:
@@ -167,9 +180,7 @@ async def run_fake_agent(options: FakeAgentOptions) -> None:
     ) -> None:
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             agent.caller_identity = participant.identity
-            task: asyncio.Task[None] = asyncio.ensure_future(agent.ears(track))
-            agent.tasks.add(task)
-            task.add_done_callback(agent.tasks.discard)
+            agent.spawn(agent.ears(track))
             ready.set()
 
     @room.on("participant_disconnected")
@@ -183,6 +194,7 @@ async def run_fake_agent(options: FakeAgentOptions) -> None:
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
     voice = asyncio.ensure_future(agent.voice_out())
+    states = asyncio.ensure_future(agent.state_sender())
     try:
         await ready.wait()
         talk = asyncio.ensure_future(agent.conversation())
@@ -190,6 +202,7 @@ async def run_fake_agent(options: FakeAgentOptions) -> None:
         talk.cancel()
     finally:
         voice.cancel()
+        states.cancel()
         await room.disconnect()
         for task in list(agent.tasks):
             task.cancel()

@@ -45,8 +45,23 @@ def test_a_turn_breaks_into_three_stages_that_add_up() -> None:
     result = decompose(call([turn(10.0, 11.5)], finals=(10.4,), speaking=(11.3,)))[0]
     assert result.total_ms == 1500
     assert result.end_of_turn_ms == 400
+    assert result.reply_ms == 1100
     assert result.agent_ms == 900
     assert result.delivery_ms == 200
+
+
+def test_a_state_that_arrives_after_the_voice_gives_negative_delivery() -> None:
+    result = decompose(call([turn(10.0, 11.0)], finals=(10.4,), speaking=(11.1,)))[0]
+    assert result.delivery_ms == -100
+    assert result.reply_ms == 600
+
+
+def test_a_state_from_the_next_turn_does_not_count() -> None:
+    first, _ = decompose(
+        call([turn(10.0, 11.0), turn(20.0, 21.0)], finals=(10.4,), speaking=(20.9,))
+    )
+    assert first.delivery_ms is None
+    assert first.reply_ms == 600
 
 
 def test_a_final_slightly_before_the_recorded_end_is_kept_as_negative() -> None:

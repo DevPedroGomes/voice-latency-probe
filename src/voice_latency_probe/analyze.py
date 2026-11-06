@@ -9,8 +9,13 @@ For each turn, on the caller's clock:
 
     total        = t_agent_voice - t_speech_end
     end_of_turn  = t_final - t_speech_end
+    reply        = t_agent_voice - t_final   (agent + delivery, needs no state)
     agent        = t_speaking - t_final      (LLM, tools, TTS)
     delivery     = t_agent_voice - t_speaking
+
+The state travels on the signaling path and the voice on the media path, so the state
+can arrive after the voice. Delivery is then negative and agent reads high. Reply is the
+number to trust for that split: it uses only the transcript and the audio.
 """
 
 from __future__ import annotations
@@ -25,7 +30,6 @@ from .timeline import SPEAKING
 
 # A final transcript can land just before the last voiced frame leaves the send queue.
 FINAL_SLACK_S = 0.3
-SPEAKING_SLACK_S = 0.05
 SMALL_SAMPLE = 20
 
 REPORTED = "reported by the agent"
@@ -51,6 +55,7 @@ class TurnResult:
     label: str
     total_ms: int
     end_of_turn_ms: int | None
+    reply_ms: int | None
     agent_ms: int | None
     delivery_ms: int | None
     reported_ms: float | None
@@ -129,8 +134,7 @@ def decompose(
             (
                 change.t
                 for change in call.states
-                if change.state == SPEAKING
-                and end < change.t <= voice + SPEAKING_SLACK_S
+                if change.state == SPEAKING and end < change.t < next_end
             ),
             None,
         )
@@ -161,6 +165,7 @@ def decompose(
                 label=label,
                 total_ms=_ms(voice - end),
                 end_of_turn_ms=_ms(final - end) if final is not None else None,
+                reply_ms=_ms(voice - final) if final is not None else None,
                 agent_ms=_ms(speaking - final)
                 if speaking is not None and final is not None
                 else None,
@@ -181,6 +186,7 @@ class Summary:
     total: Stats | None
     by_label: dict[str, Stats]
     end_of_turn: Stats | None
+    reply: Stats | None
     agent: Stats | None
     delivery: Stats | None
     reported_turns: int
@@ -220,6 +226,7 @@ def summarize(
             )
         },
         end_of_turn=stats(present(r.end_of_turn_ms for r in results)),
+        reply=stats(present(r.reply_ms for r in results)),
         agent=stats(present(r.agent_ms for r in results)),
         delivery=stats(present(r.delivery_ms for r in results)),
         reported_turns=len(with_report),
@@ -263,8 +270,9 @@ def render(summary: Summary) -> str:
     lines += [
         "",
         _row("stage: end of turn", summary.end_of_turn),
-        _row("stage: agent (LLM, tools, TTS)", summary.agent),
-        _row("stage: delivery (network, jitter)", summary.delivery),
+        _row("stage: reply (agent + delivery)", summary.reply),
+        _row("  by state: agent (LLM, tools, TTS)", summary.agent),
+        _row("  by state: delivery", summary.delivery),
     ]
     answered = summary.turns_sent - summary.unanswered
     lines += [
@@ -303,8 +311,7 @@ def compare(before: Summary, after: Summary) -> list[Comparison]:
     return [
         Comparison("voice to voice", before.total, after.total),
         Comparison("end of turn", before.end_of_turn, after.end_of_turn),
-        Comparison("agent", before.agent, after.agent),
-        Comparison("delivery", before.delivery, after.delivery),
+        Comparison("reply", before.reply, after.reply),
     ]
 
 

@@ -35,6 +35,7 @@ jobs:
       LIVEKIT_URL: ws://127.0.0.1:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
+      PROBE_ARTIFACTS: runs
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -46,10 +47,10 @@ jobs:
           docker run -d --name livekit --network host \
             livekit/livekit-server:v1.13.11 --dev --node-ip 127.0.0.1
           timeout 30 bash -c 'until curl -sf http://127.0.0.1:7880 >/dev/null; do sleep 1; done'
-      - name: The probe recovers delays it is told about
-        run: pytest -m integration -v -rs
       - name: A full run through the command line
         run: scripts/calibrate.sh runs
+      - name: The probe recovers delays it is told about
+        run: pytest -m integration -v -rs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

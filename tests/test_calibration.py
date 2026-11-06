@@ -15,11 +15,12 @@ from voice_latency_probe.analyze import summarize
 from voice_latency_probe.audio import tone, write_wav
 from voice_latency_probe.caller import CallOptions, load_utterances, run_call
 from voice_latency_probe.fake_agent import FakeAgentOptions, run_fake_agent
-from voice_latency_probe.record import Call
+from voice_latency_probe.record import Call, append_call
 
 pytestmark = pytest.mark.integration
 
 TOLERANCE_MS = 120
+ARTIFACTS = os.environ.get("PROBE_ARTIFACTS")
 
 
 def server() -> tuple[str, str, str]:
@@ -51,10 +52,15 @@ async def measure(
     )
     try:
         await asyncio.sleep(1.0)
-        return await run_call(
+        record = await run_call(
             CallOptions(url, key, secret, room=room, settle_s=1.0, turn_timeout_s=15.0),
             load_utterances([tmp_path]),
         )
+        if ARTIFACTS:
+            directory = Path(ARTIFACTS)
+            directory.mkdir(parents=True, exist_ok=True)
+            append_call(directory / f"test-{end_of_turn_ms}-{agent_ms}.jsonl", record)
+        return record
     finally:
         agent.cancel()
         await asyncio.gather(agent, return_exceptions=True)
@@ -67,13 +73,11 @@ async def test_the_probe_recovers_known_delays(tmp_path: Path) -> None:
     assert summary.unanswered == 0
     assert summary.overlaps == 0
     assert summary.end_of_turn is not None
-    assert summary.agent is not None
-    assert summary.delivery is not None
+    assert summary.reply is not None
     assert summary.total is not None
     assert summary.end_of_turn.p50 == pytest.approx(500, abs=TOLERANCE_MS)
-    assert summary.agent.p50 == pytest.approx(700, abs=TOLERANCE_MS)
-    assert summary.delivery.p50 < TOLERANCE_MS
-    assert summary.total.p50 == pytest.approx(1200, abs=2 * TOLERANCE_MS)
+    assert summary.reply.p50 == pytest.approx(700, abs=TOLERANCE_MS)
+    assert summary.total.p50 == pytest.approx(1200, abs=TOLERANCE_MS)
 
 
 async def test_the_probe_sees_what_the_agents_number_leaves_out(tmp_path: Path) -> None:

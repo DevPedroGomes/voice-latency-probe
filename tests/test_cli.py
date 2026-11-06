@@ -17,6 +17,7 @@ def test_analyze_runs_on_the_sample_with_no_keys(
     output = capsys.readouterr().out
     assert "caller: voice to voice" in output
     assert "stage: end of turn" in output
+    assert "stage: reply" in output
     assert "caller minus agent" in output
 
 
